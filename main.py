@@ -16,7 +16,19 @@ from email_service import send_ticket_email
 
 app = FastAPI(title="Ticket9ja API", version="2.0.0")
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# CORS - Allow your frontend domain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "*",  # Allow all for now
+        "https://ticket9ja.netlify.app",  # Your frontend URL
+        "http://localhost:8080",
+        "http://127.0.0.1:8080"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 uploads_path = os.path.join(os.path.dirname(__file__), "..", "uploads")
 tickets_path = os.path.join(os.path.dirname(__file__), "..", "tickets")
