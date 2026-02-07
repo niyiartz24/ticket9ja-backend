@@ -14,21 +14,26 @@ from auth import authenticate_user, create_access_token, get_current_user, creat
 from ticket_utils import generate_ticket_id, generate_qr_code, render_ticket_image, UPLOAD_DIR
 from email_service import send_ticket_email
 
+# Initialize FastAPI
 app = FastAPI(title="Ticket9ja API", version="2.0.0")
 
-# CORS - Allow your frontend domain
+# CRITICAL: CORS Configuration MUST come before routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "*",  # Allow all for now
-        "https://ticket9ja.netlify.app",  # Your frontend URL
-        "http://localhost:8080",
-        "http://127.0.0.1:8080"
+        "*"  # Allow all origins (for maximum compatibility)
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
+# Add OPTIONS handler for preflight requests
+@app.options("/{path:path}")
+async def options_handler(path: str):
+ return {"status": "ok"}
+
 
 uploads_path = os.path.join(os.path.dirname(__file__), "..", "uploads")
 tickets_path = os.path.join(os.path.dirname(__file__), "..", "tickets")
