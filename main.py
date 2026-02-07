@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Response
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -14,29 +15,41 @@ from auth import authenticate_user, create_access_token, get_current_user, creat
 from ticket_utils import generate_ticket_id, generate_qr_code, render_ticket_image, UPLOAD_DIR
 from email_service import send_ticket_email
 
+# Initialize FastAPI
 app = FastAPI(title="Ticket9ja API", version="2.0.0")
 
-# CRITICAL: CORS Configuration
+# CRITICAL: Add CORS middleware FIRST before any routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
-# Explicit OPTIONS handler
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
+# Middleware to handle CORS preflight globally
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            content={"status": "ok"},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age": "3600",
+            }
+        )
+    
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
+# Setup directories
 uploads_path = os.path.join(os.path.dirname(__file__), "..", "uploads")
 tickets_path = os.path.join(os.path.dirname(__file__), "..", "tickets")
 os.makedirs(uploads_path, exist_ok=True)
@@ -48,7 +61,7 @@ try:
 except:
     pass
 
-# Pydantic Models
+# Pydantic Models (keep your existing models below)
 class LoginRequest(BaseModel):
     username: str
     password: str
