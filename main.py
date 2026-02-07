@@ -1,7 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
@@ -15,39 +14,17 @@ from auth import authenticate_user, create_access_token, get_current_user, creat
 from ticket_utils import generate_ticket_id, generate_qr_code, render_ticket_image, UPLOAD_DIR
 from email_service import send_ticket_email
 
-# Initialize FastAPI
+# Create FastAPI app
 app = FastAPI(title="Ticket9ja API", version="2.0.0")
 
-# CRITICAL: Add CORS middleware FIRST before any routes
+# Add CORS - MUST BE AFTER app creation, BEFORE routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
 )
-
-# Middleware to handle CORS preflight globally
-@app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    if request.method == "OPTIONS":
-        return JSONResponse(
-            content={"status": "ok"},
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Max-Age": "3600",
-            }
-        )
-    
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
 
 # Setup directories
 uploads_path = os.path.join(os.path.dirname(__file__), "..", "uploads")
@@ -61,7 +38,7 @@ try:
 except:
     pass
 
-# Pydantic Models (keep your existing models below)
+# Pydantic Models
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -78,8 +55,6 @@ class EventCreate(BaseModel):
     venue: str
     city: str
     description: Optional[str] = ""
-
-# ... rest of your models and routes continue
 
 class EventResponse(BaseModel):
     id: int
@@ -130,6 +105,7 @@ class DashboardStats(BaseModel):
     total_events: int
     active_events: int
 
+# Startup event
 @app.on_event("startup")
 async def startup_event():
     init_db()
@@ -137,6 +113,7 @@ async def startup_event():
     create_default_user(db)
     db.close()
 
+# Root endpoint
 @app.get("/")
 async def root():
     return {"message": "Ticket9ja API v2.0", "status": "running"}
@@ -155,6 +132,8 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 @app.get("/api/auth/me")
 async def get_me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "username": current_user.username, "email": current_user.email}
+
+# ... REST OF YOUR ROUTES CONTINUE UNCHANGED ...
 
 # ==================== EVENT ROUTES ====================
 
