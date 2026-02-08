@@ -103,6 +103,13 @@ class DashboardStats(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
+    # Delete old database if it exists
+    import os
+    db_path = "ticket9ja.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        print("🗑️  Old database deleted")
+    
     init_db()
     db = next(get_db())
     create_default_user(db)
