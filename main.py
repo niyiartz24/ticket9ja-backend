@@ -132,6 +132,20 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "username": current_user.username, "email": current_user.email}
 
+@app.get("/api/test-email")
+async def test_email_config(current_user: User = Depends(get_current_user)):
+    """Test email configuration"""
+    from email_service import test_email_configuration
+    
+    is_valid, message = test_email_configuration()
+    
+    return {
+        "configured": is_valid,
+        "message": message,
+        "smtp_host": SMTP_HOST if 'SMTP_HOST' in dir() else "Not set",
+        "smtp_user": SMTP_USER if 'SMTP_USER' in dir() else "Not set"
+    }
+
 @app.post("/api/events", response_model=EventResponse)
 async def create_event(event_data: EventCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     new_event = Event(
@@ -217,34 +231,92 @@ async def upload_ticket_design(event_id: int, file: UploadFile = File(...), curr
     return {"message": "Ticket design uploaded successfully", "path": file_path}
 
 @app.post("/api/events/{event_id}/tickets", response_model=List[TicketResponse])
-async def create_tickets(event_id: int, ticket_data: TicketCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def create_tickets(
+    event_id: int, 
+    ticket_data: TicketCreate, 
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """Create tickets for an event"""
+    
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    
+    # Lock event on first ticket creation
     if not event.is_locked:
         event.is_locked = True
         db.commit()
+    
     created_tickets = []
+    
+    # Create tickets quickly first
     for i in range(ticket_data.quantity):
         ticket_id = generate_ticket_id()
         qr_code_path = generate_qr_code(ticket_id)
+        
+        # Render ticket image
         ticket_image_path = render_ticket_image(
-            event.ticket_design_path or "", ticket_data.attendee_name, ticket_data.ticket_type,
-            ticket_id, qr_code_path, event.name, event.event_date, event.event_time, event.venue
+            event.ticket_design_path or "",
+            ticket_data.attendee_name,
+            ticket_data.ticket_type,
+            ticket_id,
+            qr_code_path,
+            event.name,
+            event.event_date,
+            event.event_time,
+            event.venue
         )
+        
+        # Create ticket in database
         new_ticket = Ticket(
-            ticket_id=ticket_id, event_id=event.id, attendee_name=ticket_data.attendee_name,
-            attendee_email=ticket_data.attendee_email, ticket_type=ticket_data.ticket_type,
-            qr_code_path=qr_code_path, ticket_image_path=ticket_image_path, is_used=False
+            ticket_id=ticket_id,
+            event_id=event.id,
+            attendee_name=ticket_data.attendee_name,
+            attendee_email=ticket_data.attendee_email,
+            ticket_type=ticket_data.ticket_type,
+            qr_code_path=qr_code_path,
+            ticket_image_path=ticket_image_path,
+            is_used=False
         )
+        
         db.add(new_ticket)
-        db.commit()
-        db.refresh(new_ticket)
-        send_ticket_email(
-            ticket_data.attendee_email, ticket_data.attendee_name, event.name, event.event_date,
-            event.event_time, event.venue, event.city, ticket_id, ticket_data.ticket_type, ticket_image_path
-        )
         created_tickets.append(new_ticket)
+    
+    # Commit all tickets at once
+    db.commit()
+    
+    # Refresh tickets to get IDs
+    for ticket in created_tickets:
+        db.refresh(ticket)
+    
+    # Send emails in background (don't wait for them)
+    import threading
+    
+    def send_emails_async():
+        for ticket in created_tickets:
+            try:
+                send_ticket_email(
+                    ticket_data.attendee_email,
+                    ticket_data.attendee_name,
+                    event.name,
+                    event.event_date,
+                    event.event_time,
+                    event.venue,
+                    event.city,
+                    ticket.ticket_id,
+                    ticket_data.ticket_type,
+                    ticket.ticket_image_path
+                )
+            except Exception as e:
+                print(f"Background email error for {ticket.ticket_id}: {e}")
+    
+    # Start email sending in background thread
+    email_thread = threading.Thread(target=send_emails_async, daemon=True)
+    email_thread.start()
+    
+    print(f"✅ Created {len(created_tickets)} tickets. Emails sending in background...")
+    
     return created_tickets
 
 @app.get("/api/events/{event_id}/tickets", response_model=List[TicketResponse])
@@ -303,18 +375,48 @@ async def delete_ticket(ticket_id: int, current_user: User = Depends(get_current
     return {"message": f"Ticket deleted successfully: {ticket_info}"}
 
 @app.post("/api/tickets/{ticket_id}/resend")
-async def resend_ticket(ticket_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def resend_ticket(
+    ticket_id: int, 
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """Resend ticket email"""
+    
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    
     event = db.query(Event).filter(Event.id == ticket.event_id).first()
+    
+    # Try to send email
     success = send_ticket_email(
-        ticket.attendee_email, ticket.attendee_name, event.name, event.event_date,
-        event.event_time, event.venue, event.city, ticket.ticket_id, ticket.ticket_type, ticket.ticket_image_path
+        ticket.attendee_email,
+        ticket.attendee_name,
+        event.name,
+        event.event_date,
+        event.event_time,
+        event.venue,
+        event.city,
+        ticket.ticket_id,
+        ticket.ticket_type,
+        ticket.ticket_image_path
     )
+    
     if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send email")
-    return {"message": "Ticket email resent successfully"}
+        # Check if SMTP is configured
+        from email_service import SMTP_USER, SMTP_PASSWORD
+        if not SMTP_USER or not SMTP_PASSWORD:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Email not configured. Please add SMTP settings in Render environment variables."
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send email. Check SMTP configuration."
+            )
+    
+    return {"message": "Ticket email sent successfully"}
 
 @app.post("/api/scan/validate")
 async def validate_ticket(scan_data: ScanRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
