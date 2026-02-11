@@ -1,21 +1,18 @@
-import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
 from email.mime.base import MIMEBase
 from email import encoders
-from dotenv import load_dotenv
+import os
+from typing import Optional
 
-load_dotenv()
-
+# Email configuration from environment variables
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL")
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", SMTP_USER)
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Ticket9ja")
-
 
 def send_ticket_email(
     to_email: str,
@@ -29,12 +26,135 @@ def send_ticket_email(
     ticket_type: str,
     ticket_image_path: str
 ) -> bool:
-    """Send ticket email with image attachment"""
+    """
+    Send ticket email with attachment.
+    Returns True if successful, False otherwise.
+    """
+    
+    # Check if SMTP is configured
+    if not SMTP_USER or not SMTP_PASSWORD:
+        print("⚠️  WARNING: SMTP not configured. Email will not be sent.")
+        print("   Configure SMTP_USER and SMTP_PASSWORD environment variables.")
+        return False
     
     try:
-        msg = MIMEMultipart('related')
-        msg['Subject'] = f"Your Ticket for {event_name}"
+        print(f"📧 Sending ticket email to {to_email}...")
+        
+        # Create message
+        msg = MIMEMultipart()
         msg['From'] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+        msg['To'] = to_email
+        msg['Subject'] = f"🎫 Your Ticket for {event_name}"
+        
+        # Email body
+        body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                <h1 style="color: white; margin: 0;">🎫 Ticket9ja</h1>
+                <p style="color: white; margin: 10px 0 0 0;">Your Event Ticket</p>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+                <h2 style="color: #333; margin-top: 0;">Hello {attendee_name}!</h2>
+                
+                <p style="color: #666; font-size: 16px;">
+                    Your ticket for <strong>{event_name}</strong> has been confirmed! 🎉
+                </p>
+                
+                <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea;">
+                    <h3 style="color: #667eea; margin-top: 0;">Event Details</h3>
+                    <p style="margin: 10px 0;"><strong>📅 Date:</strong> {event_date}</p>
+                    <p style="margin: 10px 0;"><strong>⏰ Time:</strong> {event_time}</p>
+                    <p style="margin: 10px 0;"><strong>📍 Venue:</strong> {venue}</p>
+                    <p style="margin: 10px 0;"><strong>🏙️ City:</strong> {city}</p>
+                    <p style="margin: 10px 0;"><strong>🎫 Ticket Type:</strong> {ticket_type}</p>
+                    <p style="margin: 10px 0;"><strong>🆔 Ticket ID:</strong> <code style="background: #f0f0f0; padding: 4px 8px; border-radius: 4px;">{ticket_id}</code></p>
+                </div>
+                
+                <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>⚠️ Important:</strong> Please bring this ticket (digital or printed) to the event. 
+                        Your QR code will be scanned at the entrance.
+                    </p>
+                </div>
+                
+                <p style="color: #999; font-size: 14px; margin-top: 30px;">
+                    Need help? Contact us at support@ticket9ja.com
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Attach ticket image if it exists
+        if ticket_image_path and os.path.exists(ticket_image_path):
+            try:
+                with open(ticket_image_path, "rb") as attachment:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(attachment.read())
+                
+                encoders.encode_base64(part)
+                
+                filename = f"ticket_{ticket_id}.png"
+                part.add_header(
+                    "Content-Disposition",
+                    f"attachment; filename= {filename}",
+                )
+                
+                msg.attach(part)
+                print(f"   ✓ Ticket image attached: {filename}")
+            except Exception as e:
+                print(f"   ⚠️  Could not attach ticket image: {e}")
+        else:
+            print(f"   ⚠️  Ticket image not found: {ticket_image_path}")
+        
+        # Send email with timeout
+        print(f"   → Connecting to {SMTP_HOST}:{SMTP_PORT}...")
+        
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10)
+        server.set_debuglevel(0)  # Set to 1 for detailed debugging
+        server.starttls()
+        
+        print(f"   → Logging in as {SMTP_USER}...")
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        
+        print(f"   → Sending email...")
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"   ✅ Email sent successfully to {to_email}")
+        return True
+        
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"   ❌ SMTP Authentication failed: {e}")
+        print(f"      Check SMTP_USER and SMTP_PASSWORD")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"   ❌ SMTP Error: {e}")
+        return False
+    except Exception as e:
+        print(f"   ❌ Failed to send email: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_email_configuration():
+    """Test if email is configured correctly"""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        return False, "SMTP credentials not configured"
+    
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=5)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.quit()
+        return True, "Email configuration is valid"
+    except Exception as e:
+        return False, f"Email configuration error: {str(e)}"        msg['From'] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
         msg['To'] = to_email
         
         html_body = f"""
